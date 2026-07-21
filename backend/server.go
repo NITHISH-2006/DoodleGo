@@ -3,6 +3,7 @@ package main
 import (
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/gorilla/websocket"
 )
@@ -13,27 +14,28 @@ var upgrader = websocket.Upgrader{
 	},
 }
 
-func handleWebSocket(w http.ResponseWriter, r *http.Request) {
+func handleWebSocket(hub *Hub, w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Printf("WebSocket upgrade failed: %v", err)
 		return
 	}
 
-	log.Printf("New WebSocket connection established %s", r.RemoteAddr)
-
-	defer conn.Close()
-
-	for {
-		messageType, msg, err := conn.ReadMessage()
-		if err != nil {
-			log.Printf("Read error: %v", err)
-			break
-		}
-
-		if err := conn.WriteMessage(messageType, msg); err != nil {
-			log.Printf("Write error: %v", err)
-			break
-		}
+	var initMsg Message
+	conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+	err = conn.ReadJSON(&initMsg)
+	if err != nil {
+		log.Printf("Initial message error %v", err)
+		conn.Close()
+		return
 	}
+
+	log.Printf("Received initial message: %+v", initMsg.Type)
+
+	response := newMessage(MsgRoomJoined, map[string]string{
+		"message": "Connnection established",
+	})
+
+	conn.WriteJSON(response)
+	conn.Close()
 }
