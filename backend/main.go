@@ -7,12 +7,16 @@ import (
 
 func main() {
 	config := DefaultConfig()
+	hub := NewHub(config)
+	go hub.Run()
 
 	log.Printf("Starting server on port %s", config.Port)
 
 	http.HandleFunc("/health", healthHandler)
 
-	http.HandleFunc("/ws", handleWebSocket)
+	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
+		handleWebSocket(hub, w, r)
+	})
 
 	log.Fatal(http.ListenAndServe(config.Port, nil))
 }
