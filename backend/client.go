@@ -57,6 +57,17 @@ func (c *Client) readPump() {
 		msg.PlayerId = c.Id
 		msg.Timestamp = time.Now().UnixMilli()
 
+		switch msg.Type {
+		case MsgStartGame:
+			// Tell the room to start the game
+			if r, ok := c.hub.GetRoom(c.RoomCode); ok {
+				r.StartGame()
+			}
+		default:
+			// for now just log
+			log.Printf("Received from %s: %s", c.Name, msg.Type)
+		}
+
 		log.Printf("Received from %s: %s", c.Name, msg.Type)
 		c.send <- &msg // Echo for now
 	}

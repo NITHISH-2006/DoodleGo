@@ -73,6 +73,13 @@ type PlayerInfo struct {
 	Score int    `json:"score"`
 }
 
+type GameStartedData struct {
+	DrawerId string `json:"drawerId"`
+	Word     string `json:"word"` // real word for drawer, "*****" for others
+	RoundNum int    `json:"roundNum"`
+	TimeLeft int    `json:"timeLeft"`
+}
+
 // Helper to create timestamped messages
 func newMessage(msgType MessageType, data interface{}) *Message {
 	b, _ := json.Marshal(data)
