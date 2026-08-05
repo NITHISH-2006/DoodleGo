@@ -13,7 +13,6 @@ func main() {
 	log.Printf("Starting server on port %s", config.Port)
 
 	http.HandleFunc("/health", healthHandler)
-
 	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
 		handleWebSocket(hub, w, r)
 	})

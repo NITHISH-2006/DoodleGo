@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"math/rand"
 	"time"
 )
 
@@ -80,4 +81,13 @@ func newMessage(msgType MessageType, data interface{}) *Message {
 		Timestamp: time.Now().UnixMilli(),
 		Data:      b,
 	}
+}
+
+func randomString(n int) string {
+	const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	b := make([]byte, n)
+	for i := range b {
+		b[i] = letters[rand.Intn(len(letters))]
+	}
+	return string(b)
 }

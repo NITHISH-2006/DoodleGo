@@ -38,7 +38,7 @@ func (c *Client) Serve() {
 func (c *Client) readPump() {
 	defer log.Printf("Client %s disconnected", c.Id)
 
-	c.conn.SetReadDeadline(time.Now().Add(c.hub.config.ReadTimeout))
+	c.conn.SetReadDeadline(time.Now().Add(2 * time.Minute))
 	c.conn.SetPongHandler(func(string) error {
 		c.conn.SetReadDeadline(time.Now().Add(c.hub.config.ReadTimeout))
 		return nil
