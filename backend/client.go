@@ -57,20 +57,36 @@ func (c *Client) readPump() {
 		msg.PlayerId = c.Id
 		msg.Timestamp = time.Now().UnixMilli()
 
-		switch msg.Type {
-		case MsgStartGame:
-			// Tell the room to start the game
-			if r, ok := c.hub.GetRoom(c.RoomCode); ok {
-				r.StartGame()
-			}
-		default:
-			// for now just log
-			log.Printf("Received from %s: %s", c.Name, msg.Type)
-		}
-
-		log.Printf("Received from %s: %s", c.Name, msg.Type)
-		c.send <- &msg // Echo for now
+switch msg.Type {
+case MsgStartGame:
+	if r, ok := c.hub.GetRoom(c.RoomCode); ok {
+		r.StartGame()
 	}
+
+case MsgDrawStroke:
+	var stroke StrokeData
+	if err := json.Unmarshal(msg.Data, &stroke); err != nil {
+		log.Printf("Invalid stroke data: %v", err)
+		break
+	}
+
+	// Only the current drawer can draw
+	if r, ok := c.hub.GetRoom(c.RoomCode); ok {
+		r.mu.RLock()
+		isDrawer := r.CurrentDrawer == c.Id && r.State == "playing"
+		r.mu.RUnlock()
+
+		if isDrawer {
+			// Broadcast stroke to everyone in the room
+			strokeMsg := newMessage(MsgStroke, stroke)
+			strokeMsg.PlayerId = c.Id
+			r.Broadcast(strokeMsg)
+		}
+	}
+
+default:
+	log.Printf("Received from %s: %s", c.Name, msg.Type)
+}
 }
 
 func (c *Client) writePump() {
