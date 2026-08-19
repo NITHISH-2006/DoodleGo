@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import './App.css'
 
-const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || 'ws://127.0.0.1:8081/ws'
+const SOCKET_URL = import.meta.env.VITE_WS_URL || import.meta.env.VITE_SOCKET_URL || 'ws://127.0.0.1:8081/ws'
 
 function App() {
   const socket = useRef(null)
