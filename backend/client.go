@@ -3,7 +3,6 @@ package main
 import (
 	"log"
 	"time"
-
 	"github.com/gorilla/websocket"
 )
 
@@ -87,6 +86,7 @@ case MsgDrawStroke:
 default:
 	log.Printf("Received from %s: %s", c.Name, msg.Type)
 }
+
 }
 
 func (c *Client) writePump() {
