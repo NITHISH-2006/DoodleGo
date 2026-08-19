@@ -1,6 +1,12 @@
 # DoodleGo
 
+[![Live App](https://img.shields.io/badge/Live_Demo-doodlego.vercel.app-brightgreen?style=for-the-badge)](https://doodlego.vercel.app/)
+[![GitHub Repo](https://img.shields.io/badge/GitHub-Repository-blue?style=for-the-badge)](https://github.com/NITHISH-2006/DoodleGo)
+
 DoodleGo is a real-time multiplayer drawing and word-guessing game built with Go and React. Players can create private rooms, join via room codes, draw on a shared canvas, and guess words in real time.
+
+- 🌐 **Live Demo**: [https://doodlego.vercel.app](https://doodlego.vercel.app/)
+- ⚙️ **Backend**: [https://doodlego.onrender.com](https://doodlego.onrender.com)
 
 ---
 
