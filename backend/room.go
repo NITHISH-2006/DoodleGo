@@ -1,8 +1,10 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"math/rand"
+	"strings"
 	"sync"
 )
 
@@ -14,12 +16,14 @@ type Room struct {
 	CurrentDrawer string
 	CurrentWord   string
 	RoundNum      int
+	Scores        map[string]int
 }
 
 func NewRoom(code string) *Room {
 	return &Room{
 		Code:    code,
 		Clients: make(map[string]*Client),
+		Scores:  make(map[string]int),
 		State:   "lobby",
 	}
 }
@@ -99,4 +103,50 @@ func (r *Room) StartGame() {
 	}
 
 	log.Printf("Room %s started. Drawer: %s, Word: %s", r.Code, drawerId, word)
+}
+
+func (r *Room) HandleGuess(clientId, text string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.State != "playing" {
+		return
+	}
+
+	// Drawer cannot guess
+	if clientId == r.CurrentDrawer {
+		return
+	}
+
+	client, exists := r.Clients[clientId]
+	if !exists {
+		return
+	}
+
+	isCorrect := strings.EqualFold(strings.TrimSpace(text), r.CurrentWord)
+
+	if isCorrect {
+		r.Scores[clientId] += 10
+	}
+
+	// Broadcast the guess result
+	msg := newMessage(MsgGuessReceived, GuessReceivedData{
+		GuesserId:   clientId,
+		GuesserName: client.Name,
+		Text:        text,
+		IsCorrect:   isCorrect,
+		Message:     fmt.Sprintf("%s guessed '%s'", client.Name, text),
+	})
+	r.Broadcast(msg)
+
+	// If correct, also send score update
+	if isCorrect {
+		scoreMsg := newMessage(MsgScoreUpdate, PlayerScoreUpdate{
+			PlayerId: clientId,
+			Score:    r.Scores[clientId],
+		})
+		r.Broadcast(scoreMsg)
+
+		log.Printf("Room %s: %s guessed correctly! Score: %d", r.Code, client.Name, r.Scores[clientId])
+	}
 }

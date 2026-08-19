@@ -28,6 +28,10 @@ const (
 	MsgRoundEnd      MessageType = "ROUND_END"
 	MsgError         MessageType = "ERROR"
 	MsgPing          MessageType = "PING"
+
+	// MsgGuess         MessageType = "GUESS"
+	// MsgGuessReceived MessageType = "GUESS_RECEIVED"
+	MsgScoreUpdate MessageType = "SCORE_UPDATE"
 )
 
 // Message is the universal envelope for all WebSocket communication
@@ -78,6 +82,23 @@ type GameStartedData struct {
 	Word     string `json:"word"` // real word for drawer, "*****" for others
 	RoundNum int    `json:"roundNum"`
 	TimeLeft int    `json:"timeLeft"`
+}
+
+type GuessData struct {
+	Text string `json:"text"`
+}
+
+type GuessReceivedData struct {
+	GuesserId   string `json:"guesserId"`
+	GuesserName string `json:"guesserName"`
+	Text        string `json:"text"`
+	IsCorrect   bool   `json:"isCorrect"`
+	Message     string `json:"message"`
+}
+
+type PlayerScoreUpdate struct {
+	PlayerId string `json:"playerId"`
+	Score    int    `json:"score"`
 }
 
 // Helper to create timestamped messages
