@@ -1,6 +1,10 @@
 package main
 
-import "time"
+import (
+	"os"
+	"strings"
+	"time"
+)
 
 type Config struct {
 	Port          string
@@ -11,8 +15,15 @@ type Config struct {
 }
 
 func DefaultConfig() Config {
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = ":8081"
+	} else if !strings.HasPrefix(port, ":") {
+		port = ":" + port
+	}
+
 	return Config{
-		Port:          ":8081",
+		Port:          port,
 		ReadTimeout:   120 * time.Second, // 2 minutes
 		WriteTimeout:  10 * time.Second,
 		PingInterval:  45 * time.Second,
