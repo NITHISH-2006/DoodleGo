@@ -9,22 +9,24 @@ import (
 )
 
 type Client struct {
-	Id       string
-	Name     string
-	RoomCode string
-	conn     *websocket.Conn
-	send     chan *Message
-	hub      *Hub
+	Id         string
+	Name       string
+	RoomCode   string
+	conn       *websocket.Conn
+	send       chan *Message
+	hub        *Hub
+	registered chan struct{}
 }
 
 func NewClient(id, name, roomCode string, conn *websocket.Conn, hub *Hub) *Client {
 	return &Client{
-		Id:       id,
-		Name:     name,
-		RoomCode: roomCode,
-		conn:     conn,
-		send:     make(chan *Message, 256),
-		hub:      hub,
+		Id:         id,
+		Name:       name,
+		RoomCode:   roomCode,
+		conn:       conn,
+		send:       make(chan *Message, 256),
+		hub:        hub,
+		registered: make(chan struct{}),
 	}
 }
 

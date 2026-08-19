@@ -34,6 +34,7 @@ func (h *Hub) Run() {
 
 			if exists {
 				room.AddClient(client)
+				close(client.registered)
 				log.Printf("Client %s joined room %s", client.Id, client.RoomCode)
 
 				// Notify everyone in the room
@@ -74,7 +75,7 @@ func (h *Hub) CreateRoom(playerName string) (string, error) {
 	defer h.mu.Unlock()
 
 	code := fmt.Sprintf("ROOM%04d", rand.Intn(9000)+1000)
-	room := NewRoom(code)
+	room := NewRoom(code, h.config.RoundDuration)
 	h.rooms[code] = room
 
 	log.Printf("Room %s created by %s", code, playerName)

@@ -6,6 +6,7 @@ import (
 	"math/rand"
 	"strings"
 	"sync"
+	"time"
 )
 
 type Room struct {
@@ -17,14 +18,17 @@ type Room struct {
 	CurrentWord   string
 	RoundNum      int
 	Scores        map[string]int
+	RoundDuration time.Duration
+	roundTimer    *time.Timer
 }
 
-func NewRoom(code string) *Room {
+func NewRoom(code string, roundDuration time.Duration) *Room {
 	return &Room{
-		Code:    code,
-		Clients: make(map[string]*Client),
-		Scores:  make(map[string]int),
-		State:   "lobby",
+		Code:          code,
+		Clients:       make(map[string]*Client),
+		Scores:        make(map[string]int),
+		State:         "lobby",
+		RoundDuration: roundDuration,
 	}
 }
 
@@ -32,6 +36,7 @@ func (r *Room) AddClient(c *Client) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.Clients[c.Id] = c
+	r.Scores[c.Id] = 0
 }
 
 func (r *Room) RemoveClient(clientId string) {
@@ -55,18 +60,22 @@ func (r *Room) Broadcast(msg *Message) {
 func (r *Room) GetPlayers() []PlayerInfo {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
+	return r.playersLocked()
+}
+
+func (r *Room) playersLocked() []PlayerInfo {
 	players := make([]PlayerInfo, 0, len(r.Clients))
 	for _, c := range r.Clients {
-		players = append(players, PlayerInfo{Id: c.Id, Name: c.Name, Score: 0})
+		players = append(players, PlayerInfo{Id: c.Id, Name: c.Name, Score: r.Scores[c.Id]})
 	}
 	return players
 }
 
 func (r *Room) StartGame() {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 
-	if len(r.Clients) < 2 {
+	if len(r.Clients) < 2 || r.State == "playing" {
+		r.mu.Unlock()
 		return
 	}
 
@@ -85,6 +94,7 @@ func (r *Room) StartGame() {
 	r.CurrentDrawer = drawerId
 	r.CurrentWord = word
 	r.RoundNum++
+	r.startRoundTimerLocked()
 
 	// Send different messages to drawer vs others
 	for _, client := range r.Clients {
@@ -101,25 +111,64 @@ func (r *Room) StartGame() {
 		})
 		client.send <- msg
 	}
+	r.mu.Unlock()
 
 	log.Printf("Room %s started. Drawer: %s, Word: %s", r.Code, drawerId, word)
 }
 
+func (r *Room) startRoundTimerLocked() {
+	if r.roundTimer != nil {
+		r.roundTimer.Stop()
+	}
+	duration := r.RoundDuration
+	if duration <= 0 {
+		duration = 90 * time.Second
+	}
+	r.roundTimer = time.AfterFunc(duration, r.endRound)
+}
+
+func (r *Room) endRound() {
+	r.mu.Lock()
+	if r.State != "playing" {
+		r.mu.Unlock()
+		return
+	}
+
+	r.State = "lobby"
+	r.CurrentDrawer = ""
+	word := r.CurrentWord
+	r.CurrentWord = ""
+	players := r.playersLocked()
+	r.mu.Unlock()
+
+	r.Broadcast(newMessage(MsgRoundEnd, RoundEndData{Word: word, Players: players}))
+	time.AfterFunc(5*time.Second, func() {
+		r.mu.RLock()
+		canContinue := len(r.Clients) >= 2 && r.State == "lobby"
+		r.mu.RUnlock()
+		if canContinue {
+			r.StartGame()
+		}
+	})
+}
+
 func (r *Room) HandleGuess(clientId, text string) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 
 	if r.State != "playing" {
+		r.mu.Unlock()
 		return
 	}
 
 	// Drawer cannot guess
 	if clientId == r.CurrentDrawer {
+		r.mu.Unlock()
 		return
 	}
 
 	client, exists := r.Clients[clientId]
 	if !exists {
+		r.mu.Unlock()
 		return
 	}
 
@@ -137,16 +186,20 @@ func (r *Room) HandleGuess(clientId, text string) {
 		IsCorrect:   isCorrect,
 		Message:     fmt.Sprintf("%s guessed '%s'", client.Name, text),
 	})
-	r.Broadcast(msg)
 
-	// If correct, also send score update
+	var scoreMsg *Message
 	if isCorrect {
-		scoreMsg := newMessage(MsgScoreUpdate, PlayerScoreUpdate{
+		scoreMsg = newMessage(MsgScoreUpdate, PlayerScoreUpdate{
 			PlayerId: clientId,
 			Score:    r.Scores[clientId],
 		})
-		r.Broadcast(scoreMsg)
-
 		log.Printf("Room %s: %s guessed correctly! Score: %d", r.Code, client.Name, r.Scores[clientId])
+	}
+	r.mu.Unlock()
+
+	// Broadcast after releasing the room lock because Broadcast acquires a read lock.
+	r.Broadcast(msg)
+	if scoreMsg != nil {
+		r.Broadcast(scoreMsg)
 	}
 }

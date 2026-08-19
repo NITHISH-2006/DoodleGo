@@ -12,7 +12,7 @@ type Config struct {
 
 func DefaultConfig() Config {
 	return Config{
-		Port:          ":8080",
+		Port:          ":8081",
 		ReadTimeout:   120 * time.Second, // 2 minutes
 		WriteTimeout:  10 * time.Second,
 		PingInterval:  45 * time.Second,

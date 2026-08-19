@@ -84,6 +84,11 @@ type GameStartedData struct {
 	TimeLeft int    `json:"timeLeft"`
 }
 
+type RoundEndData struct {
+	Word    string       `json:"word"`
+	Players []PlayerInfo `json:"players"`
+}
+
 type GuessData struct {
 	Text string `json:"text"`
 }

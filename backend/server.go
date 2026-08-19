@@ -84,8 +84,9 @@ func handleWebSocket(hub *Hub, w http.ResponseWriter, r *http.Request) {
 	// Create the client
 	client = NewClient(playerId, playerName, roomCode, conn, hub)
 
-	// Register with Hub
+	// Register with Hub and wait until the room membership is visible.
 	hub.register <- client
+	<-client.registered
 
 	room, _ := hub.GetRoom(roomCode)
 	players := room.GetPlayers()
