@@ -1,86 +1,511 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import ClassicRoom from './components/ClassicRoom'
+import Lobby from './components/Lobby'
+import TogetherRoom from './components/TogetherRoom'
+import { MODE_CLASSIC, sortPlayers } from './lib/game'
 import './App.css'
 
-const SOCKET_URL = import.meta.env.VITE_WS_URL || import.meta.env.VITE_SOCKET_URL || 'ws://127.0.0.1:8081/ws'
+const DEFAULT_WS_URL =
+  typeof window === 'undefined'
+    ? 'ws://127.0.0.1:8081/ws'
+    : `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.hostname || '127.0.0.1'}:8081/ws`
+const SOCKET_URL = import.meta.env.VITE_WS_URL || import.meta.env.VITE_SOCKET_URL || DEFAULT_WS_URL
+const NAME_KEY = 'doodlego:name'
 
 function App() {
   const socket = useRef(null)
-  const canvas = useRef(null)
-  const drawing = useRef(false)
-  const lastPoint = useRef(null)
+  const canvasRef = useRef(null)
+  const playerIdRef = useRef('')
+  const intentRef = useRef(null)
+  const intentionalClose = useRef(false)
+
   const [screen, setScreen] = useState('lobby')
-  const [mode, setMode] = useState('create')
-  const [name, setName] = useState('')
+  const [entryMode, setEntryMode] = useState('create')
+  const [lobbyMode, setLobbyMode] = useState(MODE_CLASSIC)
+  const [name, setName] = useState(() => {
+    try {
+      return localStorage.getItem(NAME_KEY) || ''
+    } catch {
+      return ''
+    }
+  })
   const [roomCode, setRoomCode] = useState('')
+  const [roundDuration, setRoundDuration] = useState(90)
+
+  const [connection, setConnection] = useState('idle')
   const [room, setRoom] = useState(null)
-  const [playerId, setPlayerId] = useState('')
+  const [game, setGame] = useState(null)
   const [messages, setMessages] = useState([])
   const [guess, setGuess] = useState('')
-  const [error, setError] = useState('')
-  const [connected, setConnected] = useState(false)
   const [timeLeft, setTimeLeft] = useState(0)
+  const [correctGuessers, setCorrectGuessers] = useState([])
+  const [roundResult, setRoundResult] = useState(null)
+  const [initialStrokes, setInitialStrokes] = useState(null)
+  const [error, setError] = useState('')
+  const [copied, setCopied] = useState(false)
 
-  const send = (type, data) => {
-    if (socket.current?.readyState === WebSocket.OPEN) socket.current.send(JSON.stringify({ type, data }))
+  const connected = connection === 'connected'
+
+  const send = useCallback((type, data) => {
+    const ws = socket.current
+    if (!ws || ws.readyState !== WebSocket.OPEN) return false
+    ws.send(JSON.stringify({ type, data }))
+    return true
+  }, [])
+
+  function handleMessage(message) {
+    const data = message.data || {}
+
+    switch (message.type) {
+      case 'ROOM_JOINED': {
+        playerIdRef.current = data.playerId
+        intentRef.current = { type: 'join', roomCode: data.roomCode }
+        setRoom({
+          roomCode: data.roomCode,
+          playerId: data.playerId,
+          players: sortPlayers(data.players || []),
+          status: data.status || 'lobby',
+          mode: data.mode || MODE_CLASSIC,
+          roundDuration: data.roundDuration || 90,
+          maxPlayers: data.maxPlayers || 20,
+        })
+        setGame(data.game || null)
+        setTimeLeft(data.game?.timeLeft || 0)
+        setMessages([])
+        setCorrectGuessers([])
+        setRoundResult(null)
+        setInitialStrokes(data.strokes || [])
+        setScreen('room')
+        setError('')
+        break
+      }
+
+      case 'PLAYER_JOINED':
+        setRoom((current) =>
+          current
+            ? {
+                ...current,
+                players: sortPlayers([...current.players.filter((player) => player.id !== data.id), data]),
+              }
+            : current,
+        )
+        break
+
+      case 'PLAYER_LEFT':
+        setRoom((current) =>
+          current ? { ...current, players: current.players.filter((player) => player.id !== data.playerId) } : current,
+        )
+        break
+
+      case 'GAME_STARTED':
+        setGame(data)
+        setTimeLeft(data.timeLeft || 0)
+        setMessages([])
+        setGuess('')
+        setCorrectGuessers([])
+        setRoundResult(null)
+        setInitialStrokes([])
+        canvasRef.current?.setStrokes([])
+        break
+
+      case 'STROKE':
+        if (data.ownerId !== playerIdRef.current) canvasRef.current?.applyStroke(data)
+        break
+
+      case 'CANVAS_STATE':
+        canvasRef.current?.setStrokes(data.strokes || [])
+        setInitialStrokes(data.strokes || [])
+        break
+
+      case 'GUESS_RECEIVED':
+        setMessages((current) => [
+          ...current.slice(-99),
+          {
+            id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            ...data,
+            correct: data.isCorrect,
+          },
+        ])
+        if (data.isCorrect && data.guesserId) {
+          setCorrectGuessers((current) =>
+            current.includes(data.guesserId) ? current : [...current, data.guesserId],
+          )
+        }
+        break
+
+      case 'SCORE_UPDATE':
+        setRoom((current) =>
+          current
+            ? {
+                ...current,
+                players: sortPlayers(
+                  current.players.map((player) =>
+                    player.id === data.playerId ? { ...player, score: data.score } : player,
+                  ),
+                ),
+              }
+            : current,
+        )
+        break
+
+      case 'ROUND_END':
+        setRoom((current) =>
+          current ? { ...current, status: 'lobby', players: sortPlayers(data.players || current.players) } : current,
+        )
+        setGame(null)
+        setTimeLeft(0)
+        setGuess('')
+        setCorrectGuessers([])
+        setRoundResult({ word: data.word, players: data.players || [] })
+        setMessages((current) => [
+          ...current.slice(-99),
+          {
+            id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            system: true,
+            text: `Round over. The word was ${data.word}.`,
+          },
+        ])
+        break
+
+      case 'ERROR':
+        setError(data.error || 'The server rejected the request.')
+        setConnection('error')
+        break
+
+      default:
+        break
+    }
   }
 
-  const connect = () => {
-    if (!name.trim() || (mode === 'join' && !roomCode.trim())) return
+  const connect = (override) => {
+    const cleanName = name.trim().slice(0, 24)
+    const intent =
+      override ||
+      (entryMode === 'create'
+        ? { type: 'create', mode: lobbyMode, roundDuration }
+        : { type: 'join', roomCode: roomCode.trim().toUpperCase() })
+
+    if (!cleanName) {
+      setError('Please enter your name.')
+      return
+    }
+    if (intent.type === 'join' && !String(intent.roomCode || '').trim()) {
+      setError('Please enter a room code.')
+      return
+    }
+
+    try {
+      localStorage.setItem(NAME_KEY, cleanName)
+    } catch {
+      // Ignore unavailable storage.
+    }
+
+    const previous = socket.current
+    if (previous) {
+      previous.onopen = null
+      previous.onmessage = null
+      previous.onerror = null
+      previous.onclose = null
+      try {
+        previous.close()
+      } catch {
+        // Ignore close errors from an already closed socket.
+      }
+    }
+
+    intentionalClose.current = false
     setError('')
+    setConnection('connecting')
+    setCopied(false)
+
     const ws = new WebSocket(SOCKET_URL)
     socket.current = ws
+    intentRef.current =
+      intent.type === 'create'
+        ? { type: 'create', mode: intent.mode || MODE_CLASSIC, roundDuration: intent.roundDuration || 90 }
+        : { type: 'join', roomCode: String(intent.roomCode).trim().toUpperCase() }
+
+    const initial =
+      intent.type === 'create'
+        ? {
+            type: 'CREATE_ROOM',
+            data: {
+              playerName: cleanName,
+              mode: intent.mode || MODE_CLASSIC,
+              roundDuration: intent.roundDuration || 90,
+            },
+          }
+        : {
+            type: 'JOIN_ROOM',
+            data: {
+              playerName: cleanName,
+              roomCode: String(intent.roomCode).trim().toUpperCase(),
+            },
+          }
+
     ws.onopen = () => {
-      setConnected(true)
-      send(mode === 'create' ? 'CREATE_ROOM' : 'JOIN_ROOM', mode === 'create' ? { playerName: name.trim() } : { roomCode: roomCode.trim().toUpperCase(), playerName: name.trim() })
+      setConnection('connected')
+      ws.send(JSON.stringify(initial))
     }
-    ws.onmessage = (event) => handleMessage(JSON.parse(event.data))
-    ws.onerror = () => setError('Could not connect to the game server.')
-    ws.onclose = () => setConnected(false)
+    ws.onmessage = (event) => {
+      let parsed
+      try {
+        parsed = JSON.parse(event.data)
+      } catch {
+        return
+      }
+      handleMessage(parsed)
+    }
+    ws.onerror = () => {
+      setError('Could not connect to the game server.')
+      setConnection('error')
+    }
+    ws.onclose = () => {
+      if (socket.current !== ws) return
+      if (intentionalClose.current) {
+        intentionalClose.current = false
+        setConnection('idle')
+        return
+      }
+      setConnection((current) => (current === 'connecting' ? 'error' : 'closed'))
+    }
   }
 
-  const handleMessage = (message) => {
-    const data = message.data || {}
-    if (message.type === 'ROOM_JOINED') {
-      setPlayerId(data.playerId)
-      setRoom({ ...data, players: data.players || [] })
-      setScreen('game')
-    } else if (message.type === 'PLAYER_JOINED') {
-      setRoom((current) => current && { ...current, players: [...current.players.filter((p) => p.id !== data.id), data] })
-    } else if (message.type === 'PLAYER_LEFT') {
-      setRoom((current) => current && { ...current, players: current.players.filter((p) => p.id !== data.playerId) })
-    } else if (message.type === 'GAME_STARTED') {
-      setRoom((current) => current && { ...current, state: 'playing', game: data })
-      setTimeLeft(data.timeLeft || 90)
-      clearCanvas()
-    } else if (message.type === 'STROKE') {
-      drawStroke(data)
-    } else if (message.type === 'GUESS_RECEIVED') {
-      setMessages((current) => [...current.slice(-40), { ...data, correct: data.isCorrect }])
-    } else if (message.type === 'SCORE_UPDATE') {
-      setRoom((current) => current && { ...current, players: current.players.map((player) => player.id === data.playerId ? { ...player, score: data.score } : player) })
-    } else if (message.type === 'ROUND_END') {
-      setRoom((current) => current && { ...current, state: 'lobby', game: null, players: data.players || current.players })
-      setTimeLeft(0)
-      setMessages((current) => [...current, { system: true, text: `Round ended. The word was ${data.word}.` }])
-    } else if (message.type === 'ERROR') setError(data.error || 'The server rejected the request.')
+  const leaveRoom = () => {
+    if (socket.current?.readyState === WebSocket.OPEN) {
+      try {
+        socket.current.send(JSON.stringify({ type: 'LEAVE_ROOM' }))
+      } catch {
+        // Ignore send errors while leaving.
+      }
+    }
+    intentionalClose.current = true
+    const ws = socket.current
+    socket.current = null
+    if (ws) {
+      ws.onopen = null
+      ws.onmessage = null
+      ws.onerror = null
+      ws.onclose = null
+      try {
+        ws.close()
+      } catch {
+        // Ignore close errors.
+      }
+    }
+    playerIdRef.current = ''
+    setConnection('idle')
+    setScreen('lobby')
+    setRoom(null)
+    setGame(null)
+    setMessages([])
+    setGuess('')
+    setCorrectGuessers([])
+    setRoundResult(null)
+    setInitialStrokes(null)
+    setError('')
   }
 
-  const clearCanvas = () => { const context = canvas.current?.getContext('2d'); if (context) { context.fillStyle = '#fffdf8'; context.fillRect(0, 0, canvas.current.width, canvas.current.height) } }
-  const drawStroke = (stroke) => { const context = canvas.current?.getContext('2d'); if (!context || !stroke.points?.length) return; context.strokeStyle = stroke.color || '#162521'; context.lineWidth = stroke.size || 5; context.beginPath(); context.moveTo(stroke.points[0].x, stroke.points[0].y); stroke.points.slice(1).forEach((point) => context.lineTo(point.x, point.y)); context.stroke() }
-  const pointFromEvent = (event) => { const bounds = canvas.current.getBoundingClientRect(); return { x: (event.clientX - bounds.left) * canvas.current.width / bounds.width, y: (event.clientY - bounds.top) * canvas.current.height / bounds.height } }
-  const beginDrawing = (event) => { if (room?.game?.drawerId !== playerId) return; drawing.current = true; lastPoint.current = pointFromEvent(event) }
-  const continueDrawing = (event) => { if (!drawing.current || !lastPoint.current) return; const point = pointFromEvent(event); const stroke = { points: [lastPoint.current, point], color: '#162521', size: 6 }; drawStroke(stroke); send('DRAW_STROKE', stroke); lastPoint.current = point }
-  const submitGuess = (event) => { event.preventDefault(); if (!guess.trim()) return; send('GUESS', { text: guess.trim() }); setGuess('') }
-  const isDrawer = room?.game?.drawerId === playerId
+  const rejoin = () => {
+    const intent = intentRef.current
+    if (!intent?.roomCode) {
+      leaveRoom()
+      return
+    }
+    connect({ type: 'join', roomCode: intent.roomCode })
+  }
 
-  useEffect(() => () => socket.current?.close(), [])
-  useEffect(() => { const context = canvas.current?.getContext('2d'); if (context) { context.lineCap = 'round'; context.lineJoin = 'round'; clearCanvas() } }, [screen])
-  useEffect(() => { if (!room?.game || timeLeft <= 0) return undefined; const timer = window.setInterval(() => setTimeLeft((current) => Math.max(0, current - 1)), 1000); return () => window.clearInterval(timer) }, [room?.game, timeLeft])
+  const startGame = () => {
+    if (!game && (room?.players?.length || 0) >= 2) send('START_GAME')
+  }
 
-  return <main className="app-shell">
-    <header className="topbar"><div className="brand-mark">D</div><div><strong>DoodleGo</strong><span>draw fast. guess boldly.</span></div>{screen === 'game' && <div className="room-pill">ROOM <b>{room?.roomCode}</b></div>}</header>
-    {screen === 'lobby' ? <section className="welcome"><div className="intro"><p className="kicker">REAL-TIME DRAWING ROOM</p><h1>Make a mark.<br /><em>Make them guess.</em></h1><p className="lede">A tiny online sketchbook for friends, strangers, and suspiciously good doodlers.</p></div><div className="join-panel"><div className="tab-row"><button className={mode === 'create' ? 'active' : ''} onClick={() => setMode('create')}>Create room</button><button className={mode === 'join' ? 'active' : ''} onClick={() => setMode('join')}>Join room</button></div><label>Your name<input value={name} onChange={(event) => setName(event.target.value)} placeholder="e.g. Ada" maxLength="24" /></label>{mode === 'join' && <label>Room code<input value={roomCode} onChange={(event) => setRoomCode(event.target.value)} placeholder="ROOM1234" maxLength="8" /></label>}<button className="primary" onClick={connect}>Enter the room <span>↗</span></button>{error && <p className="error">{error}</p>}<small>{connected ? 'Connected' : 'Server: 127.0.0.1:8081'}</small></div></section> : <section className="game-layout"><aside className="side-panel"><div className="panel-heading"><span>PLAYERS</span><b>{room?.players?.length || 0}/20</b></div><div className="players">{room?.players?.map((player) => <div className={player.id === playerId ? 'player me' : 'player'} key={player.id}><span className="avatar">{player.name[0]?.toUpperCase()}</span><span>{player.name}{player.id === playerId && ' (you)'}</span><strong>{player.score}</strong></div>)}</div><div className="room-note">Share the room code<br /><b>{room?.roomCode}</b></div></aside><div className="board-column"><div className="game-status"><span className={room?.game ? 'live-dot' : 'wait-dot'}></span>{room?.game ? (isDrawer ? `Your word is ${room.game.word}` : 'Watch closely and guess') : 'Waiting for another player'}<span className="round-label">{room?.game ? `ROUND ${room.game.roundNum} · ${timeLeft}s` : 'LOBBY'}</span></div><div className="canvas-wrap"><canvas ref={canvas} width="900" height="560" onPointerDown={beginDrawing} onPointerMove={continueDrawing} onPointerUp={() => { drawing.current = false; lastPoint.current = null }} onPointerLeave={() => { drawing.current = false; lastPoint.current = null }} /></div>{!room?.game && <button className="primary start-button" onClick={() => send('START_GAME')}>Start game <span>▶</span></button>}</div><aside className="chat-panel"><div className="panel-heading"><span>GUESSES</span><span className="connected-label">● {connected ? 'LIVE' : 'OFFLINE'}</span></div><div className="chat-log">{messages.map((message, index) => message.system ? <p className="system-message" key={index}>{message.text}</p> : <p className={message.correct ? 'correct-message' : ''} key={index}><b>{message.guesserName}</b> {message.correct ? 'got it!' : message.text}</p>)}</div><form className="guess-form" onSubmit={submitGuess}><input disabled={!room?.game || isDrawer} value={guess} onChange={(event) => setGuess(event.target.value)} placeholder={isDrawer ? 'You are drawing' : 'Type a guess...'} maxLength="80" /><button aria-label="Send guess">↗</button></form></aside></section>}
-  </main>
+  const submitGuess = (event) => {
+    event.preventDefault()
+    const player = room?.playerId
+    const text = guess.trim()
+    if (!text || !game || game.drawerId === player || correctGuessers.includes(player)) return
+    if (send('GUESS', { text })) setGuess('')
+  }
+
+  const sendStroke = (stroke) => {
+    send('DRAW_STROKE', stroke)
+  }
+
+  const undoStroke = () => {
+    send('UNDO_STROKE')
+  }
+
+  const clearCanvas = () => {
+    send('CLEAR_CANVAS')
+  }
+
+  const downloadDrawing = () => {
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')
+    canvasRef.current?.download(`doodlego-${room?.roomCode || 'drawing'}-${stamp}.png`)
+  }
+
+  const copyRoomCode = async () => {
+    if (!room?.roomCode) return
+    try {
+      await navigator.clipboard.writeText(room.roomCode)
+    } catch {
+      const input = document.createElement('textarea')
+      input.value = room.roomCode
+      document.body.appendChild(input)
+      input.select()
+      try {
+        document.execCommand('copy')
+      } catch {
+        // Copying is a convenience; ignore failures.
+      }
+      input.remove()
+    }
+    setCopied(true)
+    window.setTimeout(() => setCopied(false), 1500)
+  }
+
+  useLayoutEffect(() => {
+    if (screen === 'room' && canvasRef.current) {
+      canvasRef.current.setStrokes(initialStrokes || [])
+    }
+  }, [screen, initialStrokes])
+
+  useEffect(() => {
+    if (!game) return undefined
+    // Calibrate from the server's remaining time so client/server clock skew
+    // cannot make the countdown wrong.
+    const deadline = Date.now() + Math.max(0, Number(game.timeLeft) || 0) * 1000
+    const update = () => setTimeLeft(Math.max(0, Math.ceil((deadline - Date.now()) / 1000)))
+    update()
+    const timer = window.setInterval(update, 500)
+    return () => window.clearInterval(timer)
+  }, [game])
+
+  useEffect(
+    () => () => {
+      const ws = socket.current
+      if (ws) {
+        ws.onclose = null
+        try {
+          ws.close()
+        } catch {
+          // Ignore close errors on unmount.
+        }
+      }
+    },
+    [],
+  )
+
+  return (
+    <main className="app-shell">
+      <header className="topbar">
+        <div className="brand">
+          <div className="brand-mark">D</div>
+          <div className="brand-text">
+            <strong>DoodleGo</strong>
+            <span>draw fast. guess boldly.</span>
+          </div>
+        </div>
+
+        {screen === 'room' && room && (
+          <button type="button" className="room-pill" onClick={copyRoomCode} title="Copy room code">
+            <span>ROOM</span> <b>{room.roomCode}</b>
+            {copied && <em>copied</em>}
+          </button>
+        )}
+
+        <div className="topbar-actions">
+          {screen === 'room' && (
+            <span className={`conn-pill ${connected ? 'live' : 'off'}`.trim()}>
+              <i />
+              {connected ? 'Live' : connection === 'connecting' ? 'Connecting' : 'Offline'}
+            </span>
+          )}
+          {screen === 'room' && (
+            <button type="button" className="ghost-button" onClick={leaveRoom}>
+              Leave
+            </button>
+          )}
+        </div>
+      </header>
+
+      {error && screen === 'room' && (
+        <div className="error-banner" role="alert">
+          {error}
+        </div>
+      )}
+
+      {screen === 'lobby' ? (
+        <Lobby
+          entryMode={entryMode}
+          setEntryMode={setEntryMode}
+          name={name}
+          setName={setName}
+          roomCode={roomCode}
+          setRoomCode={setRoomCode}
+          mode={lobbyMode}
+          setMode={setLobbyMode}
+          roundDuration={roundDuration}
+          setRoundDuration={setRoundDuration}
+          onSubmit={(event) => {
+            event.preventDefault()
+            connect()
+          }}
+          error={error}
+          connection={connection}
+        />
+      ) : room?.mode === 'together' ? (
+        <TogetherRoom
+          room={room}
+          playerId={room.playerId}
+          connected={connected}
+          onStroke={sendStroke}
+          canvasRef={canvasRef}
+          onUndo={undoStroke}
+          onClear={clearCanvas}
+          onDownload={downloadDrawing}
+        />
+      ) : (
+        <ClassicRoom
+          room={room}
+          game={game}
+          playerId={room.playerId}
+          timeLeft={timeLeft}
+          messages={messages}
+          guess={guess}
+          setGuess={setGuess}
+          onSubmitGuess={submitGuess}
+          onStart={startGame}
+          connected={connected}
+          roundResult={roundResult}
+          onStroke={sendStroke}
+          canvasRef={canvasRef}
+          correctGuessers={correctGuessers}
+          onUndo={undoStroke}
+          onClear={clearCanvas}
+        />
+      )}
+
+      {screen === 'room' && !connected && (
+        <div className="connection-overlay" role="dialog" aria-modal="true" aria-label="Connection lost">
+          <div className="overlay-card">
+            <span className="kicker">CONNECTION LOST</span>
+            <h2>You dropped out of the room.</h2>
+            <p>Rejoin to keep drawing. The shared canvas is restored when the room is still open.</p>
+            {error && <p className="error">{error}</p>}
+            <div className="overlay-actions">
+              <button type="button" className="primary" onClick={rejoin} disabled={connection === 'connecting'}>
+                {connection === 'connecting' ? 'Rejoining…' : 'Rejoin room'}
+              </button>
+              <button type="button" className="ghost-button" onClick={leaveRoom}>
+                Back to lobby
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </main>
+  )
 }
 
 export default App

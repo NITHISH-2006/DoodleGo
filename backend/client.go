@@ -9,39 +9,48 @@ import (
 )
 
 type Client struct {
-	Id         string
-	Name       string
-	RoomCode   string
-	conn       *websocket.Conn
-	send       chan *Message
-	hub        *Hub
-	registered chan struct{}
+	Id       string
+	Name     string
+	RoomCode string
+	conn     *websocket.Conn
+	send     chan *Message
+	hub      *Hub
+	done     chan struct{}
 }
 
 func NewClient(id, name, roomCode string, conn *websocket.Conn, hub *Hub) *Client {
 	return &Client{
-		Id:         id,
-		Name:       name,
-		RoomCode:   roomCode,
-		conn:       conn,
-		send:       make(chan *Message, 256),
-		hub:        hub,
-		registered: make(chan struct{}),
+		Id:       id,
+		Name:     name,
+		RoomCode: roomCode,
+		conn:     conn,
+		send:     make(chan *Message, 256),
+		hub:      hub,
+		done:     make(chan struct{}),
+	}
+}
+
+func (c *Client) trySend(msg *Message) {
+	select {
+	case c.send <- msg:
+	default:
+		log.Printf("Client %s send buffer full, dropping %s", c.Id, msg.Type)
 	}
 }
 
 func (c *Client) Serve() {
 	go c.writePump()
 	c.readPump()
-
-	c.hub.unregister <- c
+	c.hub.Unregister(c)
+	close(c.done)
 	c.conn.Close()
 }
 
 func (c *Client) readPump() {
 	defer log.Printf("Client %s disconnected", c.Id)
 
-	c.conn.SetReadDeadline(time.Now().Add(2 * time.Minute))
+	c.conn.SetReadLimit(c.hub.config.MaxMessageSize)
+	c.conn.SetReadDeadline(time.Now().Add(c.hub.config.ReadTimeout))
 	c.conn.SetPongHandler(func(string) error {
 		c.conn.SetReadDeadline(time.Now().Add(c.hub.config.ReadTimeout))
 		return nil
@@ -60,11 +69,14 @@ func (c *Client) readPump() {
 		msg.PlayerId = c.Id
 		msg.Timestamp = time.Now().UnixMilli()
 
+		room, roomExists := c.hub.GetRoom(c.RoomCode)
+		if !roomExists {
+			break
+		}
+
 		switch msg.Type {
 		case MsgStartGame:
-			if r, ok := c.hub.GetRoom(c.RoomCode); ok {
-				r.StartGame()
-			}
+			room.StartGame()
 
 		case MsgDrawStroke:
 			var stroke StrokeData
@@ -72,20 +84,13 @@ func (c *Client) readPump() {
 				log.Printf("Invalid stroke data: %v", err)
 				break
 			}
+			room.HandleStroke(c.Id, stroke)
 
-			// Only the current drawer can draw
-			if r, ok := c.hub.GetRoom(c.RoomCode); ok {
-				r.mu.RLock()
-				isDrawer := r.CurrentDrawer == c.Id && r.State == "playing"
-				r.mu.RUnlock()
+		case MsgUndoStroke:
+			room.HandleUndo(c.Id)
 
-				if isDrawer {
-					// Broadcast stroke to everyone in the room
-					strokeMsg := newMessage(MsgStroke, stroke)
-					strokeMsg.PlayerId = c.Id
-					r.Broadcast(strokeMsg)
-				}
-			}
+		case MsgClearCanvas:
+			room.HandleClear(c.Id)
 
 		case MsgGuess:
 			var guess GuessData
@@ -93,21 +98,25 @@ func (c *Client) readPump() {
 				log.Printf("Invalid guess data: %v", err)
 				break
 			}
+			room.HandleGuess(c.Id, guess.Text)
 
-			if r, ok := c.hub.GetRoom(c.RoomCode); ok {
-				r.HandleGuess(c.Id, guess.Text)
-			}
+		case MsgLeaveRoom:
+			c.hub.Unregister(c)
+			return
+
+		case MsgPong:
+			// The pong handler above already refreshed the deadline.
 
 		default:
 			log.Printf("Received from %s: %s", c.Name, msg.Type)
 		}
-
 	}
 }
 
 func (c *Client) writePump() {
 	ticker := time.NewTicker(c.hub.config.PingInterval)
 	defer ticker.Stop()
+	defer c.conn.Close()
 
 	for {
 		select {
@@ -126,6 +135,9 @@ func (c *Client) writePump() {
 			if err := c.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
 				return
 			}
+
+		case <-c.done:
+			return
 		}
 	}
 }

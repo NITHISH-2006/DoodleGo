@@ -4,40 +4,83 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gorilla/websocket"
 )
 
-var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool {
+var allowedRoundDurations = map[int]bool{
+	30:  true,
+	60:  true,
+	90:  true,
+	120: true,
+	180: true,
+}
+
+func buildUpgrader(config Config) websocket.Upgrader {
+	return websocket.Upgrader{
+		CheckOrigin: func(r *http.Request) bool {
+			return originAllowed(config, r)
+		},
+	}
+}
+
+func originAllowed(config Config, r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
 		return true
-	},
+	}
+	for _, allowed := range config.AllowedOrigins {
+		if allowed == "*" || strings.EqualFold(allowed, origin) {
+			return true
+		}
+	}
+	return false
 }
 
 func sendError(conn *websocket.Conn, msg string) {
+	conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
 	conn.WriteJSON(newMessage(MsgError, map[string]string{"error": msg}))
 	conn.Close()
 }
 
+func normalizeName(name string) (string, bool) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", false
+	}
+	if utf8.RuneCountInString(name) > 24 {
+		runes := []rune(name)
+		name = string(runes[:24])
+	}
+	return name, true
+}
+
+func normalizeRoundDuration(seconds int) time.Duration {
+	if !allowedRoundDurations[seconds] {
+		return 90 * time.Second
+	}
+	return time.Duration(seconds) * time.Second
+}
+
 func handleWebSocket(hub *Hub, w http.ResponseWriter, r *http.Request) {
+	upgrader := buildUpgrader(hub.config)
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Printf("Upgrade error: %v", err)
 		return
 	}
 
-	// Read the first message (must be CREATE_ROOM or JOIN_ROOM)
 	var initMsg Message
 	conn.SetReadDeadline(time.Now().Add(15 * time.Second))
-	err = conn.ReadJSON(&initMsg)
-	if err != nil {
+	if err := conn.ReadJSON(&initMsg); err != nil {
 		log.Printf("Initial message error: %v", err)
 		conn.Close()
 		return
 	}
 
-	var client *Client
 	var roomCode string
 	var playerName string
 
@@ -48,9 +91,22 @@ func handleWebSocket(hub *Hub, w http.ResponseWriter, r *http.Request) {
 			sendError(conn, "Invalid CREATE_ROOM data")
 			return
 		}
-		playerName = data.PlayerName
+		name, ok := normalizeName(data.PlayerName)
+		if !ok {
+			sendError(conn, "Please enter a name")
+			return
+		}
+		playerName = name
 
-		code, err := hub.CreateRoom(playerName)
+		mode := modeClassic
+		if data.Mode == modeTogether {
+			mode = modeTogether
+		}
+		code, err := hub.CreateRoom(RoomOptions{
+			Mode:          mode,
+			RoundDuration: normalizeRoundDuration(data.RoundDuration),
+			MaxPlayers:    hub.config.MaxPlayers,
+		})
 		if err != nil {
 			sendError(conn, err.Error())
 			return
@@ -63,42 +119,59 @@ func handleWebSocket(hub *Hub, w http.ResponseWriter, r *http.Request) {
 			sendError(conn, "Invalid JOIN_ROOM data")
 			return
 		}
-		playerName = data.PlayerName
-		roomCode = data.RoomCode
-
-		// Check if room exists
-		if _, exists := hub.GetRoom(roomCode); !exists {
-			sendError(conn, "Room not found")
+		name, ok := normalizeName(data.PlayerName)
+		if !ok {
+			sendError(conn, "Please enter a name")
 			return
 		}
-		// TODO: validate that the room exists
+		roomCode = strings.ToUpper(strings.TrimSpace(data.RoomCode))
+		if roomCode == "" {
+			sendError(conn, "Please enter a room code")
+			return
+		}
+		playerName = name
 
 	default:
 		sendError(conn, "First message must be CREATE_ROOM or JOIN_ROOM")
 		return
 	}
 
-	// Create unique player ID
-	playerId := "player-" + randomString(8)
+	playerId := randomID("player-")
+	client := NewClient(playerId, playerName, roomCode, conn, hub)
 
-	// Create the client
-	client = NewClient(playerId, playerName, roomCode, conn, hub)
+	room, err := hub.Register(client)
+	if err != nil {
+		switch err {
+		case errRoomNotFound:
+			sendError(conn, "Room not found")
+		case errRoomFull:
+			sendError(conn, "That room is full")
+		default:
+			sendError(conn, "Could not join the room")
+		}
+		return
+	}
 
-	// Register with Hub and wait until the room membership is visible.
-	hub.register <- client
-	<-client.registered
-
-	room, _ := hub.GetRoom(roomCode)
-	players := room.GetPlayers()
-	// Send ROOM_JOINED response to the client
+	snapshot := room.Snapshot(client.Id)
 	response := newMessage(MsgRoomJoined, RoomJoinedData{
-		RoomCode: roomCode,
-		PlayerId: playerId,
-		Players:  players,
-		Status:   "lobby",
+		RoomCode:      roomCode,
+		PlayerId:      playerId,
+		Players:       snapshot.Players,
+		Status:        snapshot.Status,
+		Mode:          snapshot.Mode,
+		RoundDuration: snapshot.RoundDuration,
+		MaxPlayers:    snapshot.MaxPlayers,
+		Game:          snapshot.Game,
+		Strokes:       snapshot.Strokes,
 	})
 	client.send <- response
 
-	// This keeps the connection alive (read + write pumps)
+	room.BroadcastExcept(client.Id, newMessage(MsgPlayerJoined, PlayerInfo{
+		Id:    client.Id,
+		Name:  client.Name,
+		Score: 0,
+	}))
+
+	log.Printf("Client %s (%s) joined room %s", client.Id, client.Name, client.RoomCode)
 	client.Serve()
 }
