@@ -1,4 +1,12 @@
-import { MODE_CLASSIC, MODE_TOGETHER, ROUND_OPTIONS } from '../lib/game'
+import {
+  DIFFICULTY_OPTIONS,
+  MODE_CLASSIC,
+  MODE_TOGETHER,
+  RELAY_TURN_OPTIONS,
+  ROUND_OPTIONS,
+  TOGETHER_ACTIVITY_OPTIONS,
+  TOGETHER_RELAY,
+} from '../lib/game'
 
 export default function Lobby({
   entryMode,
@@ -9,8 +17,14 @@ export default function Lobby({
   setRoomCode,
   mode,
   setMode,
+  difficulty,
+  setDifficulty,
+  activity,
+  setActivity,
   roundDuration,
   setRoundDuration,
+  relayTurnDuration,
+  setRelayTurnDuration,
   onSubmit,
   error,
   connection,
@@ -27,13 +41,14 @@ export default function Lobby({
           <em>Make them guess.</em>
         </h1>
         <p className="lede">
-          A tiny online sketchbook for friends, strangers, and suspiciously good doodlers. Pick your colors, draw
-          together, and save the masterpiece.
+          A tiny online sketchbook for friends, strangers, and suspiciously good doodlers. Guess a secret word,
+          complete a team mission, or pass the pen in a drawing relay.
         </p>
         <div className="intro-chips">
           <span>Live canvas</span>
-          <span>Classic guessing</span>
-          <span>Together mode</span>
+          <span>Three difficulties</span>
+          <span>Team missions</span>
+          <span>Drawing relay</span>
         </div>
       </div>
 
@@ -106,22 +121,71 @@ export default function Lobby({
                     aria-pressed={mode === MODE_TOGETHER}
                   >
                     <strong>Doodle Together</strong>
-                    <span>Both of you draw on one canvas and download it.</span>
+                    <span>Pick a shared activity and draw with everyone.</span>
                   </button>
                 </div>
               </div>
 
               {mode === MODE_CLASSIC && (
-                <label className="field duration-field">
-                  <span className="field-label">Round length</span>
-                  <select value={roundDuration} onChange={(event) => setRoundDuration(Number(event.target.value))}>
-                    {ROUND_OPTIONS.map((option) => (
-                      <option value={option.value} key={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                <>
+                  <label className="field duration-field">
+                    <span className="field-label">Word difficulty</span>
+                    <select value={difficulty} onChange={(event) => setDifficulty(event.target.value)}>
+                      {DIFFICULTY_OPTIONS.map((option) => (
+                        <option value={option.value} key={option.value}>
+                          {option.label} — {option.detail}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="field duration-field">
+                    <span className="field-label">Round length</span>
+                    <select value={roundDuration} onChange={(event) => setRoundDuration(Number(event.target.value))}>
+                      {ROUND_OPTIONS.map((option) => (
+                        <option value={option.value} key={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </>
+              )}
+
+              {mode === MODE_TOGETHER && (
+                <>
+                  <div className="field">
+                    <span className="field-label">Together activity</span>
+                    <div className="mode-cards activity-cards">
+                      {TOGETHER_ACTIVITY_OPTIONS.map((option) => (
+                        <button
+                          type="button"
+                          key={option.value}
+                          className={`mode-card ${activity === option.value ? 'active' : ''}`.trim()}
+                          onClick={() => setActivity(option.value)}
+                          aria-pressed={activity === option.value}
+                        >
+                          <strong>{option.label}</strong>
+                          <span>{option.detail}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  {activity === TOGETHER_RELAY && (
+                    <label className="field duration-field">
+                      <span className="field-label">Turn length</span>
+                      <select
+                        value={relayTurnDuration}
+                        onChange={(event) => setRelayTurnDuration(Number(event.target.value))}
+                      >
+                        {RELAY_TURN_OPTIONS.map((option) => (
+                          <option value={option.value} key={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
+                </>
               )}
             </>
           )}

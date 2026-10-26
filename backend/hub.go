@@ -14,9 +14,12 @@ var (
 )
 
 type RoomOptions struct {
-	Mode          string
-	RoundDuration time.Duration
-	MaxPlayers    int
+	Mode              string
+	Difficulty        string
+	TogetherActivity  string
+	RoundDuration     time.Duration
+	RelayTurnDuration time.Duration
+	MaxPlayers        int
 }
 
 type Hub struct {
@@ -44,6 +47,12 @@ func (h *Hub) CreateRoom(options RoomOptions) (string, error) {
 	}
 	if options.Mode != modeTogether {
 		options.Mode = modeClassic
+		options.TogetherActivity = ""
+	} else {
+		options.TogetherActivity = normalizeTogetherActivity(options.TogetherActivity)
+		if options.TogetherActivity == activityRelay && options.MaxPlayers > maxRelayPlayers {
+			options.MaxPlayers = maxRelayPlayers
+		}
 	}
 
 	code := ""

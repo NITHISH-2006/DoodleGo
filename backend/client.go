@@ -100,6 +100,20 @@ func (c *Client) readPump() {
 			}
 			room.HandleGuess(c.Id, guess.Text)
 
+		case MsgToggleMissionTask:
+			var data MissionToggleData
+			if err := json.Unmarshal(msg.Data, &data); err != nil {
+				log.Printf("Invalid mission task data: %v", err)
+				break
+			}
+			room.HandleMissionToggle(data.Index)
+
+		case MsgNextMission:
+			room.HandleNextMission()
+
+		case MsgStartRelay:
+			room.StartRelay()
+
 		case MsgLeaveRoom:
 			c.hub.Unregister(c)
 			return

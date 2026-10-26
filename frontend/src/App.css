@@ -315,6 +315,10 @@
   background: rgba(200, 239, 108, 0.35);
 }
 
+.activity-cards {
+  grid-template-columns: 1fr;
+}
+
 .primary {
   width: 100%;
   border: 1px solid var(--ink);
@@ -518,6 +522,16 @@
   font: 10px 'DM Mono', monospace;
   letter-spacing: 0.06em;
   opacity: 0.55;
+  white-space: nowrap;
+}
+
+.difficulty-badge {
+  border: 1px solid var(--line);
+  padding: 3px 7px;
+  font: 9px 'DM Mono', monospace;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.75;
   white-space: nowrap;
 }
 
@@ -944,6 +958,220 @@
   opacity: 0.8;
 }
 
+/* ---------- Team missions ---------- */
+
+.mission-panel,
+.relay-panel {
+  margin-top: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.mission-panel .session-card,
+.relay-panel .session-card {
+  margin-top: 0;
+}
+
+.mission-kicker-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.mission-number {
+  font: 9px 'DM Mono', monospace;
+  letter-spacing: 0.06em;
+  opacity: 0.55;
+  white-space: nowrap;
+}
+
+.mission-progress {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding-top: 9px;
+  border-top: 1px solid var(--line);
+  font: 9px 'DM Mono', monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.68;
+}
+
+.mission-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.mission-task {
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--ink);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 9px;
+  min-height: 38px;
+  text-align: left;
+  font-size: 11px;
+  line-height: 1.35;
+  cursor: pointer;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+
+.mission-task:hover:not(:disabled) {
+  border-color: var(--ink);
+}
+
+.mission-task:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.mission-check {
+  width: 18px;
+  height: 18px;
+  border: 1px solid var(--ink);
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  font-size: 11px;
+  line-height: 1;
+}
+
+.mission-task.done {
+  background: rgba(200, 239, 108, 0.28);
+  border-color: #57a340;
+}
+
+.mission-task.done .mission-check {
+  background: #57a340;
+  border-color: #57a340;
+  color: var(--paper);
+}
+
+.mission-next {
+  margin-top: 2px;
+  font-size: 12px;
+}
+
+.mission-next:disabled {
+  cursor: not-allowed;
+}
+
+.mission-note,
+.relay-note {
+  margin: 0;
+  font-size: 10px;
+  line-height: 1.5;
+  opacity: 0.58;
+}
+
+/* ---------- Drawing relay ---------- */
+
+.relay-turn-card {
+  border: 1px solid var(--ink);
+  background: var(--paper);
+  padding: 14px;
+  box-shadow: 4px 4px 0 var(--shadow);
+}
+
+.relay-turn-active {
+  border-color: #57a340;
+  background: rgba(200, 239, 108, 0.22);
+}
+
+.relay-turn-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.relay-clock {
+  font: 22px 'DM Mono', monospace;
+  color: var(--red);
+  letter-spacing: -0.04em;
+}
+
+.relay-turn-card h2 {
+  font-size: 19px;
+  line-height: 1.12;
+  letter-spacing: -0.02em;
+  margin: 10px 0 6px;
+}
+
+.relay-turn-card p {
+  margin: 8px 0 0;
+  font-size: 11px;
+  line-height: 1.5;
+  opacity: 0.68;
+}
+
+.relay-prompt {
+  display: block;
+  color: var(--red);
+  font-size: 21px;
+  line-height: 1.16;
+  letter-spacing: -0.025em;
+  margin: 2px 0 6px;
+}
+
+.relay-progress {
+  height: 5px;
+  margin-top: 12px;
+  background: rgba(22, 37, 33, 0.12);
+  overflow: hidden;
+}
+
+.relay-progress span {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, var(--green), var(--lime));
+  transition: width 0.5s linear;
+}
+
+.relay-meta {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  border: 1px solid var(--line);
+  background: rgba(255, 253, 248, 0.55);
+}
+
+.relay-meta div {
+  padding: 9px 8px;
+  border-right: 1px solid var(--line);
+  min-width: 0;
+}
+
+.relay-meta div:last-child {
+  border-right: 0;
+}
+
+.relay-meta span {
+  display: block;
+  font: 8px 'DM Mono', monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  opacity: 0.55;
+  margin-bottom: 2px;
+}
+
+.relay-meta b {
+  font: 14px 'DM Mono', monospace;
+  font-weight: 500;
+}
+
+.relay-start {
+  font-size: 12px;
+}
+
+.relay-start:disabled {
+  cursor: not-allowed;
+}
+
 /* ---------- Overlay ---------- */
 
 .connection-overlay {
@@ -1155,6 +1383,18 @@
 
   .mode-cards {
     grid-template-columns: 1fr;
+  }
+
+  .activity-cards {
+    grid-template-columns: 1fr;
+  }
+
+  .relay-meta {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .relay-prompt {
+    font-size: 19px;
   }
 
   .game-status {

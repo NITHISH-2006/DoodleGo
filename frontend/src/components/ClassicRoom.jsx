@@ -3,7 +3,7 @@ import GuessPanel from './GuessPanel'
 import PlayersPanel from './PlayersPanel'
 import Toolbar from './Toolbar'
 import { useDrawingTools } from '../hooks/useDrawingTools'
-import { formatClock } from '../lib/game'
+import { difficultyLabel, formatClock } from '../lib/game'
 
 export default function ClassicRoom({
   room,
@@ -67,6 +67,7 @@ export default function ClassicRoom({
           ) : (
             <span>{players.length >= 2 ? 'Ready for the next round' : 'Waiting for another player to join'}</span>
           )}
+          <span className="difficulty-badge">{difficultyLabel(room.difficulty)}</span>
           <span className="round-label">
             {game ? `ROUND ${game.roundNum} · ${formatClock(timeLeft)}` : 'LOBBY'}
           </span>

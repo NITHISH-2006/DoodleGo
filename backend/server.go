@@ -103,9 +103,12 @@ func handleWebSocket(hub *Hub, w http.ResponseWriter, r *http.Request) {
 			mode = modeTogether
 		}
 		code, err := hub.CreateRoom(RoomOptions{
-			Mode:          mode,
-			RoundDuration: normalizeRoundDuration(data.RoundDuration),
-			MaxPlayers:    hub.config.MaxPlayers,
+			Mode:              mode,
+			Difficulty:        normalizeDifficulty(data.Difficulty),
+			TogetherActivity:  normalizeTogetherActivity(data.TogetherActivity),
+			RoundDuration:     normalizeRoundDuration(data.RoundDuration),
+			RelayTurnDuration: normalizeRelayTurnDuration(time.Duration(data.RelayTurnDuration) * time.Second),
+			MaxPlayers:        hub.config.MaxPlayers,
 		})
 		if err != nil {
 			sendError(conn, err.Error())
@@ -154,15 +157,20 @@ func handleWebSocket(hub *Hub, w http.ResponseWriter, r *http.Request) {
 
 	snapshot := room.Snapshot(client.Id)
 	response := newMessage(MsgRoomJoined, RoomJoinedData{
-		RoomCode:      roomCode,
-		PlayerId:      playerId,
-		Players:       snapshot.Players,
-		Status:        snapshot.Status,
-		Mode:          snapshot.Mode,
-		RoundDuration: snapshot.RoundDuration,
-		MaxPlayers:    snapshot.MaxPlayers,
-		Game:          snapshot.Game,
-		Strokes:       snapshot.Strokes,
+		RoomCode:          roomCode,
+		PlayerId:          playerId,
+		Players:           snapshot.Players,
+		Status:            snapshot.Status,
+		Mode:              snapshot.Mode,
+		Difficulty:        snapshot.Difficulty,
+		TogetherActivity:  snapshot.TogetherActivity,
+		RoundDuration:     snapshot.RoundDuration,
+		RelayTurnDuration: snapshot.RelayTurnDuration,
+		MaxPlayers:        snapshot.MaxPlayers,
+		Game:              snapshot.Game,
+		Mission:           snapshot.Mission,
+		Relay:             snapshot.Relay,
+		Strokes:           snapshot.Strokes,
 	})
 	client.send <- response
 
@@ -171,6 +179,7 @@ func handleWebSocket(hub *Hub, w http.ResponseWriter, r *http.Request) {
 		Name:  client.Name,
 		Score: 0,
 	}))
+	room.TryResumeRelay()
 
 	log.Printf("Client %s (%s) joined room %s", client.Id, client.Name, client.RoomCode)
 	client.Serve()

@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"log"
 	"math"
-	"math/rand"
 	"sort"
 	"strings"
 	"sync"
@@ -15,6 +14,10 @@ const (
 	modeClassic  = "classic"
 	modeTogether = "together"
 
+	activityFreeDraw = "free_draw"
+	activityMissions = "missions"
+	activityRelay    = "relay"
+
 	stateLobby    = "lobby"
 	statePlaying  = "playing"
 	stateTogether = "together"
@@ -23,7 +26,19 @@ const (
 	maxStrokesPerRoom  = 20000
 	maxPointsPerStroke = 4096
 	maxGuessLength     = 80
+	maxRelayPlayers    = 4
 )
+
+func normalizeTogetherActivity(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case activityMissions:
+		return activityMissions
+	case activityRelay:
+		return activityRelay
+	default:
+		return activityFreeDraw
+	}
+}
 
 type Room struct {
 	Code string
@@ -43,45 +58,90 @@ type Room struct {
 	CorrectGuessers map[string]bool
 	Strokes         []StrokeData
 
-	RoundDuration time.Duration
-	MaxPlayers    int
+	RoundDuration    time.Duration
+	MaxPlayers       int
+	Difficulty       string
+	TogetherActivity string
+
+	wordDeck      []string
+	wordDeckIndex int
+	lastWord      string
+
+	missionDeck       []MissionInfo
+	missionIndex      int
+	missionChecks     []bool
+	missionsCompleted int
+	missionNumber     int
+
+	RelayTurnDuration time.Duration
+	relayStatus       string
+	relayOrder        []string
+	relayTurnIndex    int
+	relayPrompt       string
+	relayTurn         int
+	relayTotalTurns   int
+	relayEndsAt       time.Time
+	relayTimer        *time.Timer
+	relayDeck         []string
+	relayDeckIndex    int
+	relayLastPrompt   string
 
 	roundTimer   *time.Timer
 	restartTimer *time.Timer
 	roundEndsAt  time.Time
 	lastDrawerId string
-	lastWord     string
 }
 
 type RoomSnapshot struct {
-	Players       []PlayerInfo
-	Status        string
-	Mode          string
-	RoundDuration int
-	MaxPlayers    int
-	Game          *GameStartedData
-	Strokes       []StrokeData
+	Players           []PlayerInfo
+	Status            string
+	Mode              string
+	Difficulty        string
+	TogetherActivity  string
+	RoundDuration     int
+	RelayTurnDuration int
+	MaxPlayers        int
+	Game              *GameStartedData
+	Mission           *MissionStateData
+	Relay             *RelayStateData
+	Strokes           []StrokeData
 }
 
 func NewRoom(code string, options RoomOptions) *Room {
 	state := stateLobby
+	activity := ""
 	if options.Mode == modeTogether {
 		state = stateTogether
+		activity = normalizeTogetherActivity(options.TogetherActivity)
 	}
 	maxPlayers := options.MaxPlayers
 	if maxPlayers <= 1 {
 		maxPlayers = 20
 	}
-	return &Room{
-		Code:            code,
-		Clients:         make(map[string]*Client),
-		State:           state,
-		Mode:            options.Mode,
-		Scores:          make(map[string]int),
-		CorrectGuessers: make(map[string]bool),
-		RoundDuration:   options.RoundDuration,
-		MaxPlayers:      maxPlayers,
+	if activity == activityRelay && maxPlayers > maxRelayPlayers {
+		maxPlayers = maxRelayPlayers
 	}
+
+	room := &Room{
+		Code:              code,
+		Clients:           make(map[string]*Client),
+		State:             state,
+		Mode:              options.Mode,
+		Scores:            make(map[string]int),
+		CorrectGuessers:   make(map[string]bool),
+		RoundDuration:     options.RoundDuration,
+		MaxPlayers:        maxPlayers,
+		Difficulty:        normalizeDifficulty(options.Difficulty),
+		TogetherActivity:  activity,
+		RelayTurnDuration: normalizeRelayTurnDuration(options.RelayTurnDuration),
+	}
+	if activity == activityMissions {
+		room.initMissionsLocked()
+	}
+	if activity == activityRelay {
+		room.relayStatus = relayStatusLobby
+	}
+	return room
 }
 
 func (r *Room) AddClient(c *Client) error {
@@ -129,10 +189,14 @@ func (r *Room) RemoveClient(clientId string) bool {
 		}
 	}
 	empty := len(r.Clients) == 0
+	isRelay := r.TogetherActivity == activityRelay
 	r.mu.Unlock()
 
 	if wasDrawer && !empty {
 		r.endRound()
+	}
+	if isRelay && !empty {
+		r.handleRelayPlayerLeft(clientId)
 	}
 	return true
 }
@@ -153,6 +217,10 @@ func (r *Room) Close() {
 	if r.restartTimer != nil {
 		r.restartTimer.Stop()
 		r.restartTimer = nil
+	}
+	if r.relayTimer != nil {
+		r.relayTimer.Stop()
+		r.relayTimer = nil
 	}
 	r.Clients = make(map[string]*Client)
 	r.Scores = make(map[string]int)
@@ -201,14 +269,25 @@ func (r *Room) Snapshot(clientId string) RoomSnapshot {
 	defer r.mu.RUnlock()
 
 	snapshot := RoomSnapshot{
-		Players:       r.playersLocked(),
-		Status:        r.State,
-		Mode:          r.Mode,
-		RoundDuration: int(r.RoundDuration / time.Second),
-		MaxPlayers:    r.MaxPlayers,
+		Players:           r.playersLocked(),
+		Status:            r.State,
+		Mode:              r.Mode,
+		Difficulty:        r.Difficulty,
+		TogetherActivity:  r.TogetherActivity,
+		RoundDuration:     int(r.RoundDuration / time.Second),
+		RelayTurnDuration: int(r.RelayTurnDuration / time.Second),
+		MaxPlayers:        r.MaxPlayers,
 	}
 	if r.State == statePlaying {
 		snapshot.Game = r.gameStartedDataLocked(clientId)
+	}
+	if r.State == stateTogether {
+		if r.TogetherActivity == activityMissions {
+			snapshot.Mission = r.missionStateLocked()
+		}
+		if r.TogetherActivity == activityRelay {
+			snapshot.Relay = r.relayStateLocked()
+		}
 	}
 	if r.State == statePlaying || r.State == stateTogether {
 		snapshot.Strokes = append([]StrokeData(nil), r.Strokes...)
@@ -299,17 +378,17 @@ func (r *Room) pickDrawerLocked() string {
 }
 
 func (r *Room) pickWordLocked() string {
-	if len(wordList) == 0 {
+	if len(r.wordDeck) == 0 || r.wordDeckIndex >= len(r.wordDeck) {
+		r.wordDeck = newWordDeck(r.Difficulty, r.lastWord)
+		r.wordDeckIndex = 0
+	}
+	if len(r.wordDeck) == 0 {
 		return "apple"
 	}
-	for attempt := 0; attempt < 10; attempt++ {
-		word := wordList[rand.Intn(len(wordList))]
-		if word != r.lastWord || len(wordList) == 1 {
-			r.lastWord = word
-			return word
-		}
-	}
-	return wordList[rand.Intn(len(wordList))]
+	word := r.wordDeck[r.wordDeckIndex]
+	r.wordDeckIndex++
+	r.lastWord = word
+	return word
 }
 
 func (r *Room) endRound() {
@@ -514,7 +593,7 @@ func (r *Room) HandleUndo(clientId string) {
 
 func (r *Room) HandleClear(clientId string) {
 	r.mu.Lock()
-	if !r.canDrawLocked(clientId) {
+	if !r.canDrawLocked(clientId) || !r.canClearLocked() {
 		r.mu.Unlock()
 		return
 	}
@@ -527,12 +606,19 @@ func (r *Room) HandleClear(clientId string) {
 func (r *Room) canDrawLocked(clientId string) bool {
 	switch r.Mode {
 	case modeTogether:
+		if r.TogetherActivity == activityRelay {
+			return r.State == stateTogether && r.relayStatus == relayStatusPlaying && r.CurrentDrawer == clientId
+		}
 		return r.State == stateTogether
 	case modeClassic:
 		return r.State == statePlaying && r.CurrentDrawer == clientId
 	default:
 		return false
 	}
+}
+
+func (r *Room) canClearLocked() bool {
+	return !(r.Mode == modeTogether && r.TogetherActivity == activityRelay)
 }
 
 func normalizeTool(tool string) string {

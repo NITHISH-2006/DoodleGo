@@ -21,6 +21,10 @@ const (
 	MsgLeaveRoom   MessageType = "LEAVE_ROOM"
 	MsgPong        MessageType = "PONG"
 
+	MsgToggleMissionTask MessageType = "TOGGLE_MISSION_TASK"
+	MsgNextMission       MessageType = "NEXT_MISSION"
+	MsgStartRelay        MessageType = "START_RELAY"
+
 	// Server -> Client
 	MsgRoomJoined    MessageType = "ROOM_JOINED"
 	MsgPlayerJoined  MessageType = "PLAYER_JOINED"
@@ -33,6 +37,8 @@ const (
 	MsgError         MessageType = "ERROR"
 	MsgPing          MessageType = "PING"
 	MsgScoreUpdate   MessageType = "SCORE_UPDATE"
+	MsgMissionState  MessageType = "MISSION_STATE"
+	MsgRelayState    MessageType = "RELAY_STATE"
 )
 
 // Message is the universal envelope for all WebSocket communication.
@@ -68,9 +74,43 @@ type JoinRoomData struct {
 }
 
 type CreateRoomData struct {
-	PlayerName    string `json:"playerName"`
-	Mode          string `json:"mode"`
-	RoundDuration int    `json:"roundDuration"` // seconds
+	PlayerName        string `json:"playerName"`
+	Mode              string `json:"mode"`
+	RoundDuration     int    `json:"roundDuration"` // seconds
+	Difficulty        string `json:"difficulty"`
+	TogetherActivity  string `json:"togetherActivity"`
+	RelayTurnDuration int    `json:"relayTurnDuration"` // seconds
+}
+
+type MissionToggleData struct {
+	Index int `json:"index"`
+}
+
+type MissionInfo struct {
+	Id    string   `json:"id"`
+	Title string   `json:"title"`
+	Brief string   `json:"brief"`
+	Tasks []string `json:"tasks"`
+}
+
+type MissionStateData struct {
+	Mission   MissionInfo `json:"mission"`
+	Checked   []bool      `json:"checked"`
+	Completed int         `json:"completed"`
+	Number    int         `json:"number"`
+}
+
+type RelayStateData struct {
+	Status         string `json:"status"`
+	Prompt         string `json:"prompt,omitempty"`
+	DrawerId       string `json:"drawerId,omitempty"`
+	DrawerName     string `json:"drawerName,omitempty"`
+	Turn           int    `json:"turn"`
+	TotalTurns     int    `json:"totalTurns"`
+	TimeLeft       int    `json:"timeLeft"`
+	TurnEndsAt     int64  `json:"turnEndsAt,omitempty"`
+	TurnDuration   int    `json:"turnDuration"`
+	TurnsPerPlayer int    `json:"turnsPerPlayer"`
 }
 
 type PlayerInfo struct {
@@ -91,15 +131,20 @@ type GameStartedData struct {
 }
 
 type RoomJoinedData struct {
-	RoomCode      string           `json:"roomCode"`
-	PlayerId      string           `json:"playerId"`
-	Players       []PlayerInfo     `json:"players"`
-	Status        string           `json:"status"`
-	Mode          string           `json:"mode"`
-	RoundDuration int              `json:"roundDuration"`
-	MaxPlayers    int              `json:"maxPlayers"`
-	Game          *GameStartedData `json:"game,omitempty"`
-	Strokes       []StrokeData     `json:"strokes,omitempty"`
+	RoomCode          string            `json:"roomCode"`
+	PlayerId          string            `json:"playerId"`
+	Players           []PlayerInfo      `json:"players"`
+	Status            string            `json:"status"`
+	Mode              string            `json:"mode"`
+	Difficulty        string            `json:"difficulty,omitempty"`
+	TogetherActivity  string            `json:"togetherActivity,omitempty"`
+	RoundDuration     int               `json:"roundDuration"`
+	RelayTurnDuration int               `json:"relayTurnDuration,omitempty"`
+	MaxPlayers        int               `json:"maxPlayers"`
+	Game              *GameStartedData  `json:"game,omitempty"`
+	Mission           *MissionStateData `json:"mission,omitempty"`
+	Relay             *RelayStateData   `json:"relay,omitempty"`
+	Strokes           []StrokeData      `json:"strokes,omitempty"`
 }
 
 type RoundEndData struct {

@@ -3,7 +3,7 @@
 [![Live App](https://img.shields.io/badge/Live_Demo-doodlego.vercel.app-brightgreen?style=for-the-badge)](https://doodlego.vercel.app/)
 [![GitHub Repo](https://img.shields.io/badge/GitHub-Repository-blue?style=for-the-badge)](https://github.com/NITHISH-2006/DoodleGo)
 
-DoodleGo is a real-time multiplayer drawing and word-guessing game built with Go and React. Create private rooms, invite friends with a room code, draw on a shared canvas, and guess the secret word.
+DoodleGo is a real-time multiplayer drawing game built with Go and React. Create private rooms, invite friends with a room code, guess secret words, complete team missions, or pass the pen in a drawing relay.
 
 - **Live Demo**: [https://doodlego.vercel.app](https://doodlego.vercel.app/)
 - **Backend**: [https://doodlego.onrender.com](https://doodlego.onrender.com)
@@ -15,19 +15,22 @@ DoodleGo is a real-time multiplayer drawing and word-guessing game built with Go
 ### Classic mode
 - **Real-time canvas sync** with low-latency stroke broadcasting over WebSockets.
 - **Room management** with instant room creation and join-by-code.
+- **Three word difficulties**: 205 Easy, 210 Medium, and 210 Hard words (625 unique words total).
+- **No-repeat word decks** per room, with automatic reshuffling only after the deck is exhausted.
 - **Selectable round length**: 30s, 60s, 90s, 2 minutes, or 3 minutes.
-- **Turn-based rounds** with automatic drawer rotation and 190+ words.
+- **Turn-based rounds** with automatic drawer rotation.
 - **Score once per round**: a player earns +10 only on their first correct guess; repeat guesses are ignored.
 - **No word leaks**: the secret word is only sent to the drawer, and correct guesses are masked in broadcasts.
-- **Mid-game joining**: late joiners receive the active round, masked word, timer, and full canvas history.
+- **Mid-game joining**: late joiners receive the active round, masked word, timer, difficulty, and full canvas history.
 - **Live scoring and chat**, plus a round-over reveal and automatic next-round start.
 - **Disconnect handling** with a rejoin flow and canvas restoration.
 
 ### Doodle Together mode
-- **Two or more players draw on the same canvas at the same time** — ideal for friends and couples.
-- No timer, no guessing, no scoring; just a shared sketchbook.
-- **Download the finished drawing as a PNG** at any time.
-- Late joiners receive the complete drawing history.
+Choose one of three shared activities when creating a room. All of them support live stroke syncing, late joining, and mobile drawing.
+
+- **Free Draw**: everyone draws on the same canvas with no timer, guessing, or scoring. Download the finished artwork as a PNG at any time.
+- **Team Missions**: complete a shared checklist from a deck of 42 missions with five drawing tasks each. Any player can check a task, there is no timer, and the group advances only when every task is checked. The canvas clears for each new mission.
+- **Drawing Relay**: 2–4 players take turns drawing a surprise prompt. Every player gets two turns, only the active player has the pen, and the canvas clears between turns. The default turn length is 60 seconds, with 30s, 60s, and 90s options. Turns advance automatically, and the relay pauses if fewer than two players remain. Late joiners can watch the active relay and play in the next one.
 
 ### Drawing tools
 - Pen, marker/highlighter, and eraser.
@@ -61,11 +64,15 @@ DoodleGo is a real-time multiplayer drawing and word-guessing game built with Go
 │   ├── config.go      # Port, timeouts, max players, allowed origins
 │   ├── hub.go         # Room registry, atomic join/leave, unique room codes
 │   ├── main.go        # HTTP server entrypoint and health route
-│   ├── room.go        # Room state machine, scoring, strokes, round timers
+│   ├── missions.go    # Team mission deck and checklist state
+│   ├── relay.go       # Drawing Relay prompts, schedule and turn timers
+│   ├── room.go        # Room state machine, scoring, strokes, activity state
 │   ├── room_test.go   # Unit tests for scoring, rounds, canvas and modes
 │   ├── server.go      # WebSocket handshake, validation & initial state
+│   ├── together_test.go # Team Missions and Drawing Relay tests
 │   ├── types.go       # Message structs, event types & JSON envelopes
-│   └── words.go       # Word list for classic mode
+│   ├── words.go       # Easy, Medium and Hard word banks
+│   └── words_test.go  # Word bank and no-repeat deck tests
 │
 ├── frontend/
 │   ├── src/
@@ -75,7 +82,9 @@ DoodleGo is a real-time multiplayer drawing and word-guessing game built with Go
 │   │   │   ├── DrawingCanvas.jsx
 │   │   │   ├── GuessPanel.jsx
 │   │   │   ├── Lobby.jsx
+│   │   │   ├── MissionPanel.jsx
 │   │   │   ├── PlayersPanel.jsx
+│   │   │   ├── RelayPanel.jsx
 │   │   │   ├── TogetherRoom.jsx
 │   │   │   └── Toolbar.jsx
 │   │   ├── hooks/useDrawingTools.js
@@ -170,23 +179,30 @@ All socket messages use a JSON envelope:
 
 ### Client → Server
 
-- `CREATE_ROOM`: `{ playerName, mode: "classic" | "together", roundDuration }`
+- `CREATE_ROOM`: `{ playerName, mode: "classic" | "together", difficulty, togetherActivity, roundDuration, relayTurnDuration }`
 - `JOIN_ROOM`: `{ playerName, roomCode }`
 - `START_GAME`: start a classic round (any player, needs 2+ players)
 - `DRAW_STROKE`: `{ strokeId, points: [{x, y}], color, size, tool, opacity }`
 - `UNDO_STROKE`: remove the sender's last gesture
-- `CLEAR_CANVAS`: clear the shared canvas
+- `CLEAR_CANVAS`: clear the shared canvas (disabled for relay viewers)
 - `GUESS`: `{ text }`
+- `TOGGLE_MISSION_TASK`: `{ index }` — any player can toggle a Team Missions task
+- `NEXT_MISSION`: advance after every Team Missions task is checked
+- `START_RELAY`: start or restart a Drawing Relay (needs 2–4 players)
 - `LEAVE_ROOM`: leave the room
+
+`difficulty` is `"easy"`, `"medium"`, or `"hard"` and defaults to `"easy"`. `togetherActivity` is `"free_draw"`, `"missions"`, or `"relay"` and defaults to `"free_draw"`. `relayTurnDuration` is the turn length in milliseconds and is normalized to 30, 60, or 90 seconds.
 
 ### Server → Client
 
-- `ROOM_JOINED`: room code, player id, players, mode, status, round duration, active game, stroke history
+- `ROOM_JOINED`: room code, player id, players, mode, status, difficulty, together activity, round duration, relay turn duration, active game, mission state, relay state, stroke history
 - `PLAYER_JOINED` / `PLAYER_LEFT`: player list updates
-- `GAME_STARTED`: drawer, word (drawer only), masked word, round number, timer deadline
+- `GAME_STARTED`: drawer, word (drawer only), masked word, difficulty, round number, timer deadline
 - `STROKE`: relayed stroke chunk
-- `CANVAS_STATE`: full canvas state after join, undo, or clear
+- `CANVAS_STATE`: full canvas state after join, undo, clear, activity advance, or relay turn change
 - `GUESS_RECEIVED`: guess result (correct guesses are masked)
+- `MISSION_STATE`: current mission, five task labels, checked flags, mission number, and completed count
+- `RELAY_STATE`: relay status (`lobby`, `playing`, `paused`, `finished`), prompt, drawer, turn number, total turns, time left, turn deadline, turn duration, and turns per player
 - `SCORE_UPDATE`: updated player score
 - `ROUND_END`: revealed word and final player list
 - `ERROR`: handshake or validation error

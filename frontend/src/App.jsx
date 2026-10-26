@@ -2,7 +2,12 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import ClassicRoom from './components/ClassicRoom'
 import Lobby from './components/Lobby'
 import TogetherRoom from './components/TogetherRoom'
-import { MODE_CLASSIC, sortPlayers } from './lib/game'
+import {
+  DIFFICULTY_EASY,
+  MODE_CLASSIC,
+  TOGETHER_FREE_DRAW,
+  sortPlayers,
+} from './lib/game'
 import './App.css'
 
 const DEFAULT_WS_URL =
@@ -30,11 +35,17 @@ function App() {
     }
   })
   const [roomCode, setRoomCode] = useState('')
+  const [difficulty, setDifficulty] = useState(DIFFICULTY_EASY)
+  const [togetherActivity, setTogetherActivity] = useState(TOGETHER_FREE_DRAW)
   const [roundDuration, setRoundDuration] = useState(90)
+  const [relayTurnDuration, setRelayTurnDuration] = useState(60)
 
   const [connection, setConnection] = useState('idle')
   const [room, setRoom] = useState(null)
   const [game, setGame] = useState(null)
+  const [mission, setMission] = useState(null)
+  const [relay, setRelay] = useState(null)
+  const [relayTimeLeft, setRelayTimeLeft] = useState(0)
   const [messages, setMessages] = useState([])
   const [guess, setGuess] = useState('')
   const [timeLeft, setTimeLeft] = useState(0)
@@ -66,10 +77,16 @@ function App() {
           players: sortPlayers(data.players || []),
           status: data.status || 'lobby',
           mode: data.mode || MODE_CLASSIC,
+          difficulty: data.difficulty || DIFFICULTY_EASY,
+          togetherActivity: data.togetherActivity || TOGETHER_FREE_DRAW,
           roundDuration: data.roundDuration || 90,
+          relayTurnDuration: data.relayTurnDuration || 60,
           maxPlayers: data.maxPlayers || 20,
         })
         setGame(data.game || null)
+        setMission(data.mission || null)
+        setRelay(data.relay || null)
+        setRelayTimeLeft(data.relay?.timeLeft || 0)
         setTimeLeft(data.game?.timeLeft || 0)
         setMessages([])
         setCorrectGuessers([])
@@ -106,6 +123,15 @@ function App() {
         setRoundResult(null)
         setInitialStrokes([])
         canvasRef.current?.setStrokes([])
+        break
+
+      case 'MISSION_STATE':
+        setMission(data)
+        break
+
+      case 'RELAY_STATE':
+        setRelay(data)
+        setRelayTimeLeft(data.status === 'playing' ? data.timeLeft || 0 : 0)
         break
 
       case 'STROKE':
@@ -182,7 +208,14 @@ function App() {
     const intent =
       override ||
       (entryMode === 'create'
-        ? { type: 'create', mode: lobbyMode, roundDuration }
+        ? {
+            type: 'create',
+            mode: lobbyMode,
+            difficulty,
+            togetherActivity,
+            roundDuration,
+            relayTurnDuration,
+          }
         : { type: 'join', roomCode: roomCode.trim().toUpperCase() })
 
     if (!cleanName) {
@@ -222,7 +255,14 @@ function App() {
     socket.current = ws
     intentRef.current =
       intent.type === 'create'
-        ? { type: 'create', mode: intent.mode || MODE_CLASSIC, roundDuration: intent.roundDuration || 90 }
+        ? {
+            type: 'create',
+            mode: intent.mode || MODE_CLASSIC,
+            difficulty: intent.difficulty || DIFFICULTY_EASY,
+            togetherActivity: intent.togetherActivity || TOGETHER_FREE_DRAW,
+            roundDuration: intent.roundDuration || 90,
+            relayTurnDuration: intent.relayTurnDuration || 60,
+          }
         : { type: 'join', roomCode: String(intent.roomCode).trim().toUpperCase() }
 
     const initial =
@@ -232,7 +272,10 @@ function App() {
             data: {
               playerName: cleanName,
               mode: intent.mode || MODE_CLASSIC,
+              difficulty: intent.difficulty || DIFFICULTY_EASY,
+              togetherActivity: intent.togetherActivity || TOGETHER_FREE_DRAW,
               roundDuration: intent.roundDuration || 90,
+              relayTurnDuration: intent.relayTurnDuration || 60,
             },
           }
         : {
@@ -298,6 +341,9 @@ function App() {
     setScreen('lobby')
     setRoom(null)
     setGame(null)
+    setMission(null)
+    setRelay(null)
+    setRelayTimeLeft(0)
     setMessages([])
     setGuess('')
     setCorrectGuessers([])
@@ -337,6 +383,18 @@ function App() {
 
   const clearCanvas = () => {
     send('CLEAR_CANVAS')
+  }
+
+  const toggleMissionTask = (index) => {
+    send('TOGGLE_MISSION_TASK', { index })
+  }
+
+  const nextMission = () => {
+    send('NEXT_MISSION')
+  }
+
+  const startRelay = () => {
+    send('START_RELAY')
   }
 
   const downloadDrawing = () => {
@@ -380,6 +438,15 @@ function App() {
     const timer = window.setInterval(update, 500)
     return () => window.clearInterval(timer)
   }, [game])
+
+  useEffect(() => {
+    if (!relay || relay.status !== 'playing') return undefined
+    const deadline = Date.now() + Math.max(0, Number(relay.timeLeft) || 0) * 1000
+    const update = () => setRelayTimeLeft(Math.max(0, Math.ceil((deadline - Date.now()) / 1000)))
+    update()
+    const timer = window.setInterval(update, 500)
+    return () => window.clearInterval(timer)
+  }, [relay])
 
   useEffect(
     () => () => {
@@ -445,8 +512,14 @@ function App() {
           setRoomCode={setRoomCode}
           mode={lobbyMode}
           setMode={setLobbyMode}
+          difficulty={difficulty}
+          setDifficulty={setDifficulty}
+          activity={togetherActivity}
+          setActivity={setTogetherActivity}
           roundDuration={roundDuration}
           setRoundDuration={setRoundDuration}
+          relayTurnDuration={relayTurnDuration}
+          setRelayTurnDuration={setRelayTurnDuration}
           onSubmit={(event) => {
             event.preventDefault()
             connect()
@@ -464,6 +537,12 @@ function App() {
           onUndo={undoStroke}
           onClear={clearCanvas}
           onDownload={downloadDrawing}
+          mission={mission}
+          relay={relay}
+          relayTimeLeft={relayTimeLeft}
+          onToggleMissionTask={toggleMissionTask}
+          onNextMission={nextMission}
+          onStartRelay={startRelay}
         />
       ) : (
         <ClassicRoom
